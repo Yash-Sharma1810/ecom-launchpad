@@ -1,7 +1,6 @@
 #
 # This is the final, corrected Backend Server. Save this file as 'main.py'
-# --- FIX: Added a root endpoint ("/") to handle Render's health checks ---
-# --- UPDATE: Added more robust scraping logic and error handling ---
+# --- FINAL FIX: Added a @app.head("/") endpoint to handle all of Render's health checks ---
 #
 
 import requests
@@ -16,6 +15,7 @@ import time
 import random
 import os
 import json
+from fastapi.responses import Response
 
 # --- DISCLAIMER ---
 # Web scraping is against the terms of service of many websites.
@@ -91,8 +91,6 @@ class ProductRequest(BaseModel):
 # --- MODULE 1: DEMAND ANALYSIS ---
 def analyze_demand_logic(keyword, geo='IN'):
     try:
-        # Pytrends does not easily support standard proxy authentication, so we run it without.
-        # It's more likely to be rate-limited but won't crash the server.
         pytrends = TrendReq(hl='en-US', tz=330, timeout=(3, 7), retries=2)
         pytrends.build_payload([keyword], cat=0, timeframe='today 12-m', geo=geo)
         interest_over_time_df = pytrends.interest_over_time()
@@ -106,7 +104,6 @@ def analyze_demand_logic(keyword, geo='IN'):
     except requests.exceptions.Timeout:
         return {"status": "error", "message": "Google Trends request timed out. The service may be temporarily unavailable or blocking requests."}
     except Exception as e:
-        # Check for 429 error specifically
         if 'response with code 429' in str(e):
              return {"status": "error", "message": "Rate limited by Google Trends (Error 429). Please try again in a few minutes."}
         return {"status": "error", "message": f"Could not fetch Google Trends data. Error: {e}"}
@@ -200,6 +197,10 @@ def scrape_leads_logic(product_name, max_leads=500):
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "E-commerce Launchpad Backend is running."}
+
+@app.head("/")
+def head_root():
+    return Response(status_code=200)
 
 
 @app.post("/analyze")
