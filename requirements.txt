@@ -6,3 +6,5 @@ pandas
 pytrends
 pydantic
 python-multipart
+selenium
+webdriver-manager
