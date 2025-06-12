@@ -9,4 +9,4 @@ python-multipart
 selenium
 webdriver-manager
 selenium-wire
-blinker
+blinker==1.7.0

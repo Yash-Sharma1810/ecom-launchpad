@@ -1,6 +1,7 @@
 #
 # This is the final, production-ready Backend Server. Save this file as 'main.py'
 # --- FIX: It now uses selenium-wire for proper, authenticated proxy scraping. ---
+# --- FIX: It also has the robust CORS policy to allow the frontend to connect. ---
 #
 
 import requests
@@ -26,18 +27,21 @@ from selenium.webdriver.support import expected_conditions as EC
 
 app = FastAPI()
 
-# --- CORS Middleware ---
+# --- CORS MIDDLEWARE (ROBUST CONFIGURATION) ---
+# This is the crucial part that gives your Netlify frontend permission to talk to this backend.
 origins = [
     "https://melodic-concha-626dd6.netlify.app", # Your specific frontend URL
     "http://localhost",
     "http://localhost:8080",
+    # You can add other origins here if needed
 ]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
 )
 
 # --- SECURE PROXY CONFIGURATION ---
@@ -58,7 +62,7 @@ def get_selenium_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("start-maximized")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled") # Makes it look less like a bot
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
     seleniumwire_options = {}
     if DATAIMPULSE_USER and DATAIMPULSE_PASS:
@@ -81,7 +85,6 @@ def get_selenium_driver():
 # --- MODULE 1: DEMAND ANALYSIS (pytrends fix) ---
 def analyze_demand_logic(keyword, geo='IN'):
     try:
-        # FIX: Removed the outdated 'retries' argument.
         pytrends = TrendReq(hl='en-US', tz=330, timeout=(10, 25))
         pytrends.build_payload([keyword], cat=0, timeframe='today 12-m', geo=geo)
         df = pytrends.interest_over_time()
