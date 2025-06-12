@@ -22,7 +22,6 @@
         .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
-    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body class="antialiased">
 
@@ -37,23 +36,22 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
         const ANALYSIS_COST = 3;
-        const BACKEND_URL = "https://ecom-launchpad.onrender.com";
+        const BACKEND_URL = "https://ecom-launchpad-backend.onrender.com"; // Use your live Render URL
 
         const firebaseConfig = {
-            apiKey: "AIzaSyCkOydOL_dlL-TG6RD1TWzLFGN0rE57HoU",
+            apiKey: "YOUR_FIREBASE_API_KEY", // Replace with your actual Firebase key
             authDomain: "ecommerce-launchpad.firebaseapp.com",
             projectId: "ecommerce-launchpad",
-            storageBucket: "ecommerce-launchpad.firebasestorage.app",
+            storageBucket: "ecommerce-launchpad.appspot.com",
             messagingSenderId: "315183919363",
-            appId:  "1:315183919363:web:1de4342d4a8369216db936"
-
+            appId: "1:315183919363:web:1de4342d4a8369216db936"
         };
         
         let db;
         try {
             if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
             db = firebase.firestore();
-        } catch (e) { console.error("Firebase not configured. Please replace dummy credentials."); }
+        } catch (e) { console.error("Firebase not configured correctly."); }
 
         const App = () => {
             const [currentUser, setCurrentUser] = useState(null);
@@ -76,7 +74,6 @@
                 const userDocRef = db.collection('users').doc(email);
                 const doc = await userDocRef.get();
                 if (!doc.exists) {
-                    // New users are 'free' tier by default
                     await userDocRef.set({ email, credits: 5, subscriptionTier: 'free' });
                 }
                 sessionStorage.setItem('launchpadUserEmail', email);
@@ -101,35 +98,11 @@
             const [analysisState, setAnalysisState] = useState({ results: null, error: '', status: '' });
             const [leadsState, setLeadsState] = useState({ leads: null, error: '', isLoading: false});
 
-            const handleBuyCredits = () => {
-                // --- This is where the real payment logic goes ---
-
-                const options = {
-                    "key": "YOUR_RAZORPAY_KEY_ID", // IMPORTANT: Replace with your Key ID from Razorpay Dashboard
-                    "amount": "1000", // Amount in the smallest currency unit. 1000 paise = ₹10
-                    "currency": "INR",
-                    "name": "Seller's Launchpad",
-                    "description": "20 Analysis Credits",
-                    "handler": function (response) {
-                        // This function is called ONLY after a successful payment
-                        alert("Payment successful! Payment ID: " + response.razorpay_payment_id);
-                        
-                        // Add credits to the user's account AFTER payment is confirmed
-                        const newCreditAmount = user.credits + 20;
-                        updateUserCredits(newCreditAmount);
-                    },
-                    "prefill": {
-                        "email": user.email,
-                    },
-                    "theme": {
-                        "color": "#d98324"
-                    }
-                };
-                
-                // This creates and opens the Razorpay checkout pop-up
-                const rzp1 = new Razorpay(options);
-                rzp1.open();
+            const updateUserCredits = async (newCreditAmount) => {
+                 if (!db) return;
+                 await db.collection('users').doc(user.email).update({ credits: newCreditAmount });
             };
+
             const handleAnalyze = async () => {
                 if (user.credits < ANALYSIS_COST) { setAnalysisState({ ...analysisState, error: `Not enough credits. You need ${ANALYSIS_COST}.` }); return; }
                 setIsLoading(true);
@@ -145,6 +118,20 @@
                     setAnalysisState({ results: await response.json(), error: '', status: 'Analysis Complete!' });
                 } catch (err) { setAnalysisState({ results: null, error: `Analysis failed: ${err.message}.`, status: 'Failed' }); } 
                 finally { setIsLoading(false); }
+            };
+
+            // --- NEW: Simplified UPI Payment Simulation ---
+            const handleBuyCredits = () => {
+                const upiId = "your-business-upi@okhdfcbank"; // Example UPI ID to show the user
+                const transactionId = prompt(`Please complete a payment of ₹10 to UPI ID: ${upiId}\n\nEnter the transaction ID below to confirm:`);
+
+                if (transactionId && transactionId.trim() !== "") {
+                    // This simulates verification. In a real app, you might have a backend check.
+                    alert("Transaction ID received. Verification successful! 20 credits have been added.");
+                    updateUserCredits(user.credits + 20);
+                } else {
+                    alert("Payment cancelled. No credits were added.");
+                }
             };
             
             const handleGetLeads = async () => {
@@ -177,7 +164,7 @@
                         
                         <PremiumFeature user={user} productName={productName} onGetLeads={handleGetLeads} leadsState={leadsState} />
 
-                        <div className="bg-gray-200 p-6 rounded-xl mt-8 text-center"><h3 className="text-xl font-bold mb-2">Need More Credits?</h3><p className="text-gray-600 mb-4">Top up your account to continue your research.</p><div className="max-w-xs mx-auto bg-white p-4 rounded-lg shadow-inner"><p className="font-bold text-lg">20 Credits</p><p className="font-extrabold text-3xl highlight-accent">₹10</p><button onClick={() => updateUserCredits(user.credits + 20)} className="btn btn-primary mt-3 w-full">Pay with UPI / Cards</button></div></div>
+                        <div className="bg-gray-200 p-6 rounded-xl mt-8 text-center"><h3 className="text-xl font-bold mb-2">Need More Credits?</h3><p className="text-gray-600 mb-4">Top up your account to continue your research.</p><div className="max-w-xs mx-auto bg-white p-4 rounded-lg shadow-inner"><p className="font-bold text-lg">20 Credits</p><p className="font-extrabold text-3xl highlight-accent">₹10</p><button onClick={handleBuyCredits} className="btn btn-primary mt-3 w-full">Pay with UPI</button></div></div>
                     </div></main>
                 </div>
             );
