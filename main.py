@@ -1,7 +1,7 @@
 #
-# This is the final, production-ready Backend Server. Save this file as 'main.py'
-# --- FIX: It now uses selenium-wire for proper, authenticated proxy scraping. ---
-# --- FIX: It also has the robust CORS policy to allow the frontend to connect. ---
+# This is the final, most robust Backend Server. Save this file as 'main.py'
+# --- UPDATE: Selenium settings have been hardened for a server environment.
+# --- UPDATE: Error messages are now more detailed for easier debugging.
 #
 
 import requests
@@ -27,21 +27,18 @@ from selenium.webdriver.support import expected_conditions as EC
 
 app = FastAPI()
 
-# --- CORS MIDDLEWARE (ROBUST CONFIGURATION) ---
-# This is the crucial part that gives your Netlify frontend permission to talk to this backend.
+# --- CORS Middleware ---
 origins = [
     "https://melodic-concha-626dd6.netlify.app", # Your specific frontend URL
     "http://localhost",
     "http://localhost:8080",
-    # You can add other origins here if needed
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- SECURE PROXY CONFIGURATION ---
@@ -54,15 +51,19 @@ class ProductRequest(BaseModel):
     product_name: str
     user_email: str
 
-# --- SELENIUM WEBDRIVER SETUP (using Selenium-Wire) ---
+# --- ROBUST SELENIUM WEBDRIVER SETUP ---
 def get_selenium_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("start-maximized")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+
 
     seleniumwire_options = {}
     if DATAIMPULSE_USER and DATAIMPULSE_PASS:
@@ -77,12 +78,13 @@ def get_selenium_driver():
         
     try:
         driver = webdriver.Chrome(options=chrome_options, seleniumwire_options=seleniumwire_options)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
     except Exception as e:
         print(f"Error initializing Selenium driver: {e}")
         return None
 
-# --- MODULE 1: DEMAND ANALYSIS (pytrends fix) ---
+# --- MODULE 1: DEMAND ANALYSIS ---
 def analyze_demand_logic(keyword, geo='IN'):
     try:
         pytrends = TrendReq(hl='en-US', tz=330, timeout=(10, 25))
@@ -95,10 +97,10 @@ def analyze_demand_logic(keyword, geo='IN'):
         elif 25 < avg <= 60: insight = "Moderate interest."
         return {"status": "success", "average_interest": f"{avg:.2f}/100", "insight": insight}
     except Exception as e:
-        if '429' in str(e): return {"status": "error", "message": "Rate limited by Google Trends (429)."}
+        if '429' in str(e): return {"status": "error", "message": "Rate limited by Google Trends (Error 429)."}
         return {"status": "error", "message": f"Google Trends Error: {e}"}
 
-# --- MODULE 2 & 3: COMPETITOR & SUPPLIER SCRAPING (with Selenium-Wire) ---
+# --- MODULE 2 & 3: COMPETITOR & SUPPLIER SCRAPING ---
 def get_scrape_data_with_selenium(product_name):
     driver = get_selenium_driver()
     if not driver:
@@ -114,8 +116,9 @@ def get_scrape_data_with_selenium(product_name):
 
     try:
         # --- Scrape IndiaMART for Suppliers ---
+        print("Scraping IndiaMART...")
         driver.get(f"https://dir.indiamart.com/search.mp?ss={product_name.replace(' ', '+')}")
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.s-brd.cmp-nm')))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.s-brd.cmp-nm')))
         soup_indiamart = BeautifulSoup(driver.page_source, 'lxml')
         s_elements = soup_indiamart.select('.s-brd.cmp-nm')
         l_elements = soup_indiamart.select('.s-brd.s-add')
@@ -126,8 +129,9 @@ def get_scrape_data_with_selenium(product_name):
             all_data["suppliers"] = {"status": "warning", "message": f"No suppliers found for '{product_name}'."}
 
         # --- Scrape Amazon for Competitors ---
+        print("Scraping Amazon...")
         driver.get(f"https://www.amazon.in/s?k={product_name.replace(' ', '+')}")
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.a-price-whole')))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.a-price-whole')))
         soup_amazon = BeautifulSoup(driver.page_source, 'lxml')
         amazon_prices = [float(p.get_text(strip=True).replace(',', '')) for p in soup_amazon.select('.a-price-whole')[:5]]
         
@@ -136,6 +140,10 @@ def get_scrape_data_with_selenium(product_name):
 
     except Exception as e:
         print(f"Selenium scraping failed: {e}")
+        # --- UPDATE: Return the specific error message to the frontend ---
+        error_message = f"Scraping failed. Error: {str(e)[:100]}..." # Truncate long error messages
+        all_data["suppliers"]["message"] = error_message
+        all_data["competitors"]["message"] = error_message
     finally:
         driver.quit()
 
