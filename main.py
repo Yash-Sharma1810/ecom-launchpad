@@ -1,6 +1,7 @@
 #
 # This is the final, corrected Backend Server. Save this file as 'main.py'
 # --- FIX: Added a root endpoint ("/") to handle Render's health checks ---
+# --- UPDATE: Added more robust scraping logic and error handling ---
 #
 
 import requests
@@ -46,9 +47,10 @@ else:
     DATAIMPULSE_GATEWAY = f"http://{DATAIMPULSE_USER}:{DATAIMPULSE_PASS}@gw.dataimpulse.com:823"
 
 USER_AGENT_LIST = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
 ]
 
 def make_request_with_retry(url, retries=3):
@@ -60,15 +62,26 @@ def make_request_with_retry(url, retries=3):
     
     for i in range(retries):
         try:
-            headers = {"User-Agent": random.choice(USER_AGENT_LIST)}
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=20)
+            # Add more realistic headers
+            headers = {
+                "User-Agent": random.choice(USER_AGENT_LIST),
+                "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+                "Connection": "keep-alive"
+            }
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=25)
             if response.status_code == 200:
                 return response
+            elif response.status_code == 429:
+                print(f"Rate limited (429). Waiting and retrying...")
+                time.sleep(5 + i) # Wait longer on each retry
+                continue
             else:
                 print(f"Request failed with status {response.status_code}. Retrying...")
         except requests.exceptions.RequestException as e:
             print(f"Request failed: {e}. Retrying ({i+1}/{retries})...")
-        time.sleep(1)
+        time.sleep(2) # Wait before retrying
     return None
 
 class ProductRequest(BaseModel):
@@ -88,7 +101,12 @@ def analyze_demand_logic(keyword, geo='IN'):
         if avg_interest > 60: insight = "High and consistent search interest."
         elif 25 < avg_interest <= 60: insight = "Moderate search interest."
         return {"status": "success", "average_interest": f"{avg_interest:.2f} / 100", "insight": insight}
+    except requests.exceptions.Timeout:
+        return {"status": "error", "message": "Google Trends request timed out. The service may be temporarily unavailable or blocking requests."}
     except Exception as e:
+        # Check for 429 error specifically
+        if 'response with code 429' in str(e):
+             return {"status": "error", "message": "Rate limited by Google Trends (Error 429). Please try again in a few minutes."}
         return {"status": "error", "message": f"Could not fetch Google Trends data. Error: {e}"}
 
 # --- MODULE 2: SUPPLIER DISCOVERY ---
@@ -96,14 +114,14 @@ def find_suppliers_logic(product_name):
     url = f"https://dir.indiamart.com/search.mp?ss={product_name.replace(' ', '+')}"
     response = make_request_with_retry(url)
     if not response:
-        return {"status": "error", "message": "Could not scrape IndiaMART after multiple retries."}
+        return {"status": "error", "message": "Could not scrape IndiaMART. The site may be blocking requests or your proxies may be failing."}
 
     try:
         soup = BeautifulSoup(response.text, 'lxml')
         suppliers_elements = soup.select('.s-brd.cmp-nm')
         locations_elements = soup.select('.s-brd.s-add')
         if not suppliers_elements:
-            return {"status": "warning", "message": f"Could not find specific suppliers on IndiaMART for '{product_name}'."}
+            return {"status": "warning", "message": f"Could not find specific suppliers on IndiaMART for '{product_name}'. The product might be too niche or the page structure changed."}
         suppliers_data = []
         for sup, loc in zip(suppliers_elements[:5], locations_elements[:5]):
             supplier_name = sup.get_text(strip=True)
@@ -167,7 +185,7 @@ def scrape_leads_logic(product_name, max_leads=500):
             if name_el and loc_el:
                 leads.append({"name": name_el.get_text(strip=True),"location": loc_el.get_text(strip=True),"contact": contact_el.get_text(strip=True) if contact_el else "Contact not found"})
                 if len(leads) >= max_leads: break
-        time.sleep(1)
+        time.sleep(1.5) # Increased sleep time to be more respectful
 
     if not leads:
         return {"status": "warning", "message": f"Could not find any leads for '{product_name}'."}
@@ -177,7 +195,6 @@ def scrape_leads_logic(product_name, max_leads=500):
 
 # --- API Endpoints ---
 
-# --- FIX: This root endpoint responds to Render's health checks ---
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "E-commerce Launchpad Backend is running."}
@@ -198,7 +215,6 @@ async def analyze_product(request: ProductRequest):
 @app.post("/get_leads")
 async def get_premium_leads(request: ProductRequest):
     user_email = request.user_email
-    # The check for premium users is simplified for this demo
     if "pro" not in user_email and "agency" not in user_email:
         raise HTTPException(status_code=403, detail="This is a premium feature. Please upgrade your plan to access.")
 
