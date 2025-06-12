@@ -22,6 +22,7 @@
         .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body class="antialiased">
 
@@ -100,11 +101,35 @@
             const [analysisState, setAnalysisState] = useState({ results: null, error: '', status: '' });
             const [leadsState, setLeadsState] = useState({ leads: null, error: '', isLoading: false});
 
-            const updateUserCredits = async (newCreditAmount) => {
-                 if (!db) return;
-                 await db.collection('users').doc(user.email).update({ credits: newCreditAmount });
-            };
+            const handleBuyCredits = () => {
+                // --- This is where the real payment logic goes ---
 
+                const options = {
+                    "key": "YOUR_RAZORPAY_KEY_ID", // IMPORTANT: Replace with your Key ID from Razorpay Dashboard
+                    "amount": "1000", // Amount in the smallest currency unit. 1000 paise = ₹10
+                    "currency": "INR",
+                    "name": "Seller's Launchpad",
+                    "description": "20 Analysis Credits",
+                    "handler": function (response) {
+                        // This function is called ONLY after a successful payment
+                        alert("Payment successful! Payment ID: " + response.razorpay_payment_id);
+                        
+                        // Add credits to the user's account AFTER payment is confirmed
+                        const newCreditAmount = user.credits + 20;
+                        updateUserCredits(newCreditAmount);
+                    },
+                    "prefill": {
+                        "email": user.email,
+                    },
+                    "theme": {
+                        "color": "#d98324"
+                    }
+                };
+                
+                // This creates and opens the Razorpay checkout pop-up
+                const rzp1 = new Razorpay(options);
+                rzp1.open();
+            };
             const handleAnalyze = async () => {
                 if (user.credits < ANALYSIS_COST) { setAnalysisState({ ...analysisState, error: `Not enough credits. You need ${ANALYSIS_COST}.` }); return; }
                 setIsLoading(true);
