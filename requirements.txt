@@ -9,3 +9,4 @@ python-multipart
 selenium
 webdriver-manager
 selenium-wire
+blinker
