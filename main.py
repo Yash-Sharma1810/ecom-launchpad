@@ -91,6 +91,8 @@ class ProductRequest(BaseModel):
 # --- MODULE 1: DEMAND ANALYSIS ---
 def analyze_demand_logic(keyword, geo='IN'):
     try:
+        # Pytrends does not easily support standard proxy authentication, so we run it without.
+        # It's more likely to be rate-limited but won't crash the server.
         pytrends = TrendReq(hl='en-US', tz=330, timeout=(3, 7), retries=2)
         pytrends.build_payload([keyword], cat=0, timeframe='today 12-m', geo=geo)
         interest_over_time_df = pytrends.interest_over_time()
