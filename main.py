@@ -1,7 +1,6 @@
 #
-# This is the Backend Server. Save this file as 'main.py'
-# This version includes the new, protected "/get_leads" endpoint for premium users
-# and proxy/user-agent rotation for robust scraping.
+# This is the final, corrected Backend Server. Save this file as 'main.py'
+# --- FIX: Added a root endpoint ("/") to handle Render's health checks ---
 #
 
 import requests
@@ -14,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import time
 import random
+import os
+import json
 
 # --- DISCLAIMER ---
 # Web scraping is against the terms of service of many websites.
@@ -33,15 +34,16 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# --- NEW: SECURE PROXY AND USER AGENT CONFIGURATION ---
-import os
+# --- SECURE PROXY AND USER AGENT CONFIGURATION ---
+# Securely loads credentials from environment variables set on the server
+DATAIMPULSE_USER = os.environ.get('DATAIMPULSE_USER')
+DATAIMPULSE_PASS = os.environ.get('DATAIMPULSE_PASS')
 
-# Securely load your DataImpulse credentials from environment variables
-DATAIMPULSE_USER = os.environ.get('DATAIMPULSE_USER', 'your_username')
-DATAIMPULSE_PASS = os.environ.get('DATAIMPULSE_PASS', 'your_password')
-
-# The single, powerful gateway address provided by DataImpulse
-DATAIMPULSE_GATEWAY = f"http://{DATAIMPULSE_USER}:{DATAIMPULSE_PASS}@gw.dataimpulse.com:823"
+if not DATAIMPULSE_USER or not DATAIMPULSE_PASS:
+    print("WARNING: Proxy credentials not found in environment variables. Scraping may fail.")
+    DATAIMPULSE_GATEWAY = None
+else:
+    DATAIMPULSE_GATEWAY = f"http://{DATAIMPULSE_USER}:{DATAIMPULSE_PASS}@gw.dataimpulse.com:823"
 
 USER_AGENT_LIST = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -50,6 +52,10 @@ USER_AGENT_LIST = [
 ]
 
 def make_request_with_retry(url, retries=3):
+    if not DATAIMPULSE_GATEWAY:
+        print("Scraping request skipped: No proxy gateway configured.")
+        return None
+        
     proxies = {"http": DATAIMPULSE_GATEWAY, "https": DATAIMPULSE_GATEWAY}
     
     for i in range(retries):
@@ -69,7 +75,7 @@ class ProductRequest(BaseModel):
     product_name: str
     user_email: str # Used to verify subscription status
 
-# --- MODULE 1: DEMAND ANALYSIS (Unchanged) ---
+# --- MODULE 1: DEMAND ANALYSIS ---
 def analyze_demand_logic(keyword, geo='IN'):
     try:
         pytrends = TrendReq(hl='en-US', tz=330)
@@ -85,7 +91,7 @@ def analyze_demand_logic(keyword, geo='IN'):
     except Exception as e:
         return {"status": "error", "message": f"Could not fetch Google Trends data. Error: {e}"}
 
-# --- MODULE 2: SUPPLIER DISCOVERY (Updated with Proxies)---
+# --- MODULE 2: SUPPLIER DISCOVERY ---
 def find_suppliers_logic(product_name):
     url = f"https://dir.indiamart.com/search.mp?ss={product_name.replace(' ', '+')}"
     response = make_request_with_retry(url)
@@ -108,7 +114,7 @@ def find_suppliers_logic(product_name):
     except Exception as e:
         return {"status": "error", "message": f"Could not parse IndiaMART data. Error: {e}"}
 
-# --- MODULE 3: COMPETITOR ANALYSIS (Updated with Proxies) ---
+# --- MODULE 3: COMPETITOR ANALYSIS ---
 def get_competitors_logic(product_name):
     def scrape_amazon(soup):
         prices = []
@@ -145,7 +151,7 @@ def get_competitors_logic(product_name):
     insight = f"Overall Market Average Price is ~₹{market_avg:,.2f}." if market_avg > 0 else "Could not determine an average market price."
     return {"status": "success", "platforms": results, "market_avg": market_avg, "insight": insight}
 
-# --- NEW PREMIUM MODULE: LEAD GENERATION (Updated with Proxies) ---
+# --- PREMIUM MODULE: LEAD GENERATION ---
 def scrape_leads_logic(product_name, max_leads=500):
     leads = []
     for page in range(1, 15):
@@ -171,6 +177,12 @@ def scrape_leads_logic(product_name, max_leads=500):
 
 # --- API Endpoints ---
 
+# --- FIX: This root endpoint responds to Render's health checks ---
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "E-commerce Launchpad Backend is running."}
+
+
 @app.post("/analyze")
 async def analyze_product(request: ProductRequest):
     product_name = request.product_name
@@ -186,6 +198,7 @@ async def analyze_product(request: ProductRequest):
 @app.post("/get_leads")
 async def get_premium_leads(request: ProductRequest):
     user_email = request.user_email
+    # The check for premium users is simplified for this demo
     if "pro" not in user_email and "agency" not in user_email:
         raise HTTPException(status_code=403, detail="This is a premium feature. Please upgrade your plan to access.")
 
