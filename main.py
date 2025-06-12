@@ -1,6 +1,6 @@
 #
-# This is the final, Selenium-powered Backend Server. Save this file as 'main.py'
-# It uses a real automated browser to avoid getting blocked.
+# This is the final, production-ready Backend Server. Save this file as 'main.py'
+# --- FIX: It now uses selenium-wire for proper, authenticated proxy scraping. ---
 #
 
 import requests
@@ -17,8 +17,8 @@ import os
 import json
 from fastapi.responses import Response
 
-# Selenium Imports
-from selenium import webdriver
+# Selenium-Wire Imports for authenticated proxies
+from seleniumwire import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -28,7 +28,7 @@ app = FastAPI()
 
 # --- CORS Middleware ---
 origins = [
-    "https://melodic-concha-626dd6.netlify.app", # Your frontend URL
+    "https://melodic-concha-626dd6.netlify.app", # Your specific frontend URL
     "http://localhost",
     "http://localhost:8080",
 ]
@@ -50,37 +50,39 @@ class ProductRequest(BaseModel):
     product_name: str
     user_email: str
 
-# --- SELENIUM WEBDRIVER SETUP ---
+# --- SELENIUM WEBDRIVER SETUP (using Selenium-Wire) ---
 def get_selenium_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    
-    # Configure proxy for Selenium if credentials are set
+    chrome_options.add_argument("start-maximized")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled") # Makes it look less like a bot
+
+    seleniumwire_options = {}
     if DATAIMPULSE_USER and DATAIMPULSE_PASS:
-        proxy_server = f"{DATAIMPULSE_HOST}:{DATAIMPULSE_PORT}"
-        # For authenticated proxies, a different setup might be needed depending on the library
-        # A common way is to use an extension like Selenium-Wire
-        # For this setup, we'll use a standard proxy argument
-        chrome_options.add_argument(f'--proxy-server={proxy_server}')
-        # Note: For authenticated proxies with Selenium, you often need an extension
-        # or a plugin to handle the username/password. This setup is a simplified example.
+        proxy_options = {
+            'proxy': {
+                'http': f'http://{DATAIMPULSE_USER}:{DATAIMPULSE_PASS}@{DATAIMPULSE_HOST}:{DATAIMPULSE_PORT}',
+                'https': f'http://{DATAIMPULSE_USER}:{DATAIMPULSE_PASS}@{DATAIMPULSE_HOST}:{DATAIMPULSE_PORT}',
+                'no_proxy': 'localhost,127.0.0.1' 
+            }
+        }
+        seleniumwire_options = proxy_options
         
-    # The 'executable_path' might need to be set to '/usr/bin/chromedriver' on Render
-    # if the buildpack installs it there. For local testing, webdriver-manager can be used.
     try:
-        driver = webdriver.Chrome(options=chrome_options)
+        driver = webdriver.Chrome(options=chrome_options, seleniumwire_options=seleniumwire_options)
         return driver
     except Exception as e:
         print(f"Error initializing Selenium driver: {e}")
         return None
 
-# --- MODULE 1: DEMAND ANALYSIS (No change, uses requests) ---
+# --- MODULE 1: DEMAND ANALYSIS (pytrends fix) ---
 def analyze_demand_logic(keyword, geo='IN'):
     try:
-        pytrends = TrendReq(hl='en-US', tz=330, timeout=(3, 7), retries=2)
+        # FIX: Removed the outdated 'retries' argument.
+        pytrends = TrendReq(hl='en-US', tz=330, timeout=(10, 25))
         pytrends.build_payload([keyword], cat=0, timeframe='today 12-m', geo=geo)
         df = pytrends.interest_over_time()
         if df.empty: return {"status": "warning", "message": f"No Google Trends data for '{keyword}'."}
@@ -93,7 +95,7 @@ def analyze_demand_logic(keyword, geo='IN'):
         if '429' in str(e): return {"status": "error", "message": "Rate limited by Google Trends (429)."}
         return {"status": "error", "message": f"Google Trends Error: {e}"}
 
-# --- MODULE 2 & 3: COMPETITOR & SUPPLIER SCRAPING (with Selenium) ---
+# --- MODULE 2 & 3: COMPETITOR & SUPPLIER SCRAPING (with Selenium-Wire) ---
 def get_scrape_data_with_selenium(product_name):
     driver = get_selenium_driver()
     if not driver:
@@ -102,51 +104,45 @@ def get_scrape_data_with_selenium(product_name):
             "competitors": {"status": "error", "message": "Backend browser could not start."}
         }
 
-    suppliers_data = {"status": "error", "message": "Scraping failed."}
-    competitors_data = {"status": "error", "message": "Scraping failed."}
+    all_data = {
+        "suppliers": {"status": "error", "message": "Scraping failed."},
+        "competitors": {"status": "error", "message": "Scraping failed."}
+    }
 
     try:
         # --- Scrape IndiaMART for Suppliers ---
         driver.get(f"https://dir.indiamart.com/search.mp?ss={product_name.replace(' ', '+')}")
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.s-brd.cmp-nm')))
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.s-brd.cmp-nm')))
         soup_indiamart = BeautifulSoup(driver.page_source, 'lxml')
-        suppliers_elements = soup_indiamart.select('.s-brd.cmp-nm')
-        locations_elements = soup_indiamart.select('.s-brd.s-add')
-        if suppliers_elements:
-            s_data = [{"name": s.get_text(strip=True), "location": l.find('p', class_=False).get_text(strip=True) if l.find('p', class_=False) else "N/A"} for s, l in zip(suppliers_elements[:5], locations_elements[:5])]
-            suppliers_data = {"status": "success", "suppliers": s_data, "insight": "Found potential suppliers."}
+        s_elements = soup_indiamart.select('.s-brd.cmp-nm')
+        l_elements = soup_indiamart.select('.s-brd.s-add')
+        if s_elements:
+            s_data = [{"name": s.get_text(strip=True), "location": l.find('p', class_=False).get_text(strip=True) if l.find('p', class_=False) else "N/A"} for s, l in zip(s_elements[:5], l_elements[:5])]
+            all_data["suppliers"] = {"status": "success", "suppliers": s_data, "insight": "Found potential suppliers."}
         else:
-            suppliers_data = {"status": "warning", "message": f"No suppliers found for '{product_name}'."}
+            all_data["suppliers"] = {"status": "warning", "message": f"No suppliers found for '{product_name}'."}
 
         # --- Scrape Amazon for Competitors ---
         driver.get(f"https://www.amazon.in/s?k={product_name.replace(' ', '+')}")
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.a-price-whole')))
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, '.a-price-whole')))
         soup_amazon = BeautifulSoup(driver.page_source, 'lxml')
         amazon_prices = [float(p.get_text(strip=True).replace(',', '')) for p in soup_amazon.select('.a-price-whole')[:5]]
         
-        # In a real app, you would add logic for Flipkart, Meesho etc. here
-        
         market_avg = sum(amazon_prices) / len(amazon_prices) if amazon_prices else 0
-        competitors_data = {"status": "success", "platforms": {"Amazon": {"avg_price": f"₹{market_avg:,.2f}", "listings_found": len(amazon_prices)}, "Flipkart": {"avg_price": "N/A", "listings_found": 0}, "Meesho": {"avg_price": "N/A", "listings_found": 0}}, "market_avg": market_avg, "insight": f"Market Avg Price (from Amazon): ~₹{market_avg:,.2f}"}
+        all_data["competitors"] = {"status": "success", "platforms": {"Amazon": {"avg_price": f"₹{market_avg:,.2f}", "listings_found": len(amazon_prices)}, "Flipkart": {"avg_price": "N/A", "listings_found": 0}, "Meesho": {"avg_price": "N/A", "listings_found": 0}}, "market_avg": market_avg, "insight": f"Market Avg Price (from Amazon): ~₹{market_avg:,.2f}"}
 
     except Exception as e:
         print(f"Selenium scraping failed: {e}")
-        suppliers_data = {"status": "error", "message": "An error occurred during scraping."}
-        competitors_data = {"status": "error", "message": "An error occurred during scraping."}
     finally:
         driver.quit()
 
-    return {"suppliers": suppliers_data, "competitors": competitors_data}
+    return all_data
     
-
 # --- API Endpoints ---
 @app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Backend is running."}
-
+def read_root(): return {"status": "ok"}
 @app.head("/")
-def head_root():
-    return Response(status_code=200)
+def head_root(): return Response(status_code=200)
 
 @app.post("/analyze")
 async def analyze_product(request: ProductRequest):
@@ -155,16 +151,11 @@ async def analyze_product(request: ProductRequest):
     demand = analyze_demand_logic(request.product_name)
     scrape_data = get_scrape_data_with_selenium(request.product_name)
 
-    return {
-        "demand": demand,
-        "suppliers": scrape_data["suppliers"],
-        "competitors": scrape_data["competitors"]
-    }
+    return { "demand": demand, **scrape_data }
 
-# --- Premium lead generation would also be updated to use Selenium ---
 @app.post("/get_leads")
 async def get_premium_leads(request: ProductRequest):
-    # This feature would be re-implemented using Selenium for robustness
+    # This feature would also be updated to use Selenium for robustness
     if "pro" not in request.user_email and "agency" not in request.user_email:
         raise HTTPException(status_code=403, detail="This is a premium feature.")
     return {"status": "success", "count": 0, "leads": [], "message": "Lead generation with Selenium is under development."}
