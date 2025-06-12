@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+requests
+beautifulsoup4
+pandas
+pytrends
+pydantic
+python-multipart
