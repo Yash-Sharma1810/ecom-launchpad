@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: ecom-launchpad-backend
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: "/"
+    buildpacks:
+      - url: https://github.com/heroku/heroku-buildpack-google-chrome
+      - url: https://github.com/heroku/heroku-buildpack-chromedriver
+    envVars:
+      - key: DATAIMPULSE_USER
+        sync: false
+      - key: DATAIMPULSE_PASS
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.4
